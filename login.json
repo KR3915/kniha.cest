@@ -1,0 +1,48 @@
+{
+  "users": [
+    {
+        "username": "admin",
+        "password":"1234"
+    },
+    {
+      "username": "echo_alpha",
+      "password": "z9bz4f1v"
+    },
+    {
+      "username": "sierra_bravo",
+      "password": "x2kd8g6w"
+    },
+    {
+      "username": "tango_charlie",
+      "password": "y5lw2h9x"
+    },
+    {
+      "username": "uniform_delta",
+      "password": "a8mp6j2y"
+    },
+    {
+      "username": "victor_echo",
+      "password": "b1nq0k5z"
+    },
+    {
+      "username": "whiskey_foxtrot",
+      "password": "c4or4l8a"
+    },
+    {
+      "username": "xray_golf",
+      "password": "d7ps8m1b"
+    },
+    {
+      "username": "yankee_hotel",
+      "password": "e0qt2n4c"
+    },
+    {
+      "username": "zulu_india",
+      "password": "f3ru6o9d"
+    },
+    {
+      "username": "alpha_juliet",
+      "password": "g6sv0p2e"
+    }
+  ]
+}
