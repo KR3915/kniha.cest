@@ -3,12 +3,25 @@
     {
         "username": "admin",
         "password":"1234",
-        "admin":"true"
+        "admin":"1"
     },
     {
         "username":"user",
         "password":"1234",
-        "admin":"false"
+        "admin":"0",
+        "trasy":[
+        {
+          "name":"trasa1",
+          "distance":"400",
+          "destination":"brno"
+          
+        },
+        {
+          "name":"olomouc",
+          "distance":"400",
+          "destination":"olomouc"
+        }
+        ]
     }
   ]
 }
