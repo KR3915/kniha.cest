@@ -1,0 +1,3 @@
+heslo: 4T7*hT4cB
+user: kniha_user
+databaze: kniha_data
