@@ -1,0 +1,22 @@
+{
+  "users": [
+    {
+      "username": "admin",
+      "password": "1234",
+      "admin": "1"
+    },
+    {
+      "username": "user",
+      "password": "1234",
+      "admin": "0",
+      "trasy": [
+        {
+          "name": "trasa1",
+          "distance": "298.11 km",
+          "start_location": "Praha, Czechia",
+          "destination": "olomouc"
+        }
+      ]
+    }
+  ]
+}
