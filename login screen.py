@@ -1,117 +1,119 @@
+# login_screen.py
 import tkinter as tk
-import json
 from tkinter import messagebox
-import subprocess # Pro spuštění user_screen.py v novém procesu
-import sys # Pro ukončení procesu login_screen po spuštění user_screen
+import database # Import the database module
 
-# Import admin_screen modul
-# Ujistěte se, že 'admin_screen.py' je ve stejném adresáři
+# Import screen modules, but don't run them directly yet
 import admin_screen
+import user_screen
 
-# --- Styling Constants (můžete si je přizpůsobit) ---
-BG_COLOR = "#f0f0f0"
-FG_COLOR = "#333333"
-BUTTON_BG = "#e0e0e0"
-BUTTON_FG = FG_COLOR
-FONT = ("Segoe UI", 10)
-TITLE_FONT = ("Segoe UI", 16, "bold")
-PADDING = 10
-BUTTON_PADDING_X = 15
-BUTTON_PADDING_Y = 8
+# Global variables for the main window and currently logged-in user
+main_app_window = None
+logged_in_username = None
+logged_in_user_id = None
 
-LOGIN_FILE = "login.json" # Centralizovaný název souboru pro snadnou úpravu
+def start_app():
+    """Initializes the database and sets up the main login window."""
+    global main_app_window
 
-def load_login_data(file):
-    """Načte celý JSON soubor s přihlašovacími údaji."""
-    try:
-        # Používáme encoding='utf-8' pro správnou manipulaci s českými znaky
-        with open(file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            return data
-    except FileNotFoundError:
-        messagebox.showerror("Chyba načítání", f"Soubor '{file}' nebyl nalezen!", parent=window)
-        return None
-    except json.JSONDecodeError:
-        messagebox.showerror("Chyba formátu", f"Neplatný formát JSON v souboru '{file}'!", parent=window)
-        return None
+    # Inicializuje databázi POUZE JEDNOU při spuštění aplikace.
+    # To je klíčové pro zabránění zámkům databáze.
+    database.initialize_db()
 
-def verify_is_admin(username):
-    """
-    Ověří, zda má dané uživatelské jméno administrátorská oprávnění.
-    Tato funkce POUZE KONTROLUJE status a nic nespouští.
-    """
-    data = load_login_data(LOGIN_FILE)
-    if data is None or "users" not in data:
-        return False
+    main_app_window = tk.Tk()
+    main_app_window.title("Přihlašovací obrazovka")
+    main_app_window.geometry("300x200")
+    main_app_window.resizable(False, False)
 
-    for user_data in data.get("users", []):
-        if user_data.get("username") == username:
-            # Zkontrolujeme, zda 'admin' klíč existuje a má hodnotu "1"
-            if user_data.get("admin") == "1":
-                return True
-    return False # Uživatel nalezen, ale není admin, nebo uživatel nenalezen
+    # Center the window on the screen
+    main_app_window.update_idletasks()
+    x = main_app_window.winfo_screenwidth() // 2 - main_app_window.winfo_width() // 2
+    y = main_app_window.winfo_screenheight() // 2 - main_app_window.winfo_height() // 2
+    main_app_window.geometry(f"+{x}+{y}")
 
-def verify_login(username, password):
-    """Ověří uživatelské jméno a heslo."""
-    data = load_login_data(LOGIN_FILE)
-    if data is None or "users" not in data:
-        return False
+    # Call function to create login UI initially
+    create_login_widgets(main_app_window)
 
-    for user_data in data.get("users", []):
-        if user_data.get("username") == username:
-            if user_data.get("password") == password:
-                return True # Správné uživatelské jméno a heslo
-            else:
-                messagebox.showerror("Chyba přihlášení", "Nesprávné heslo!")
-                return False # Nesprávné heslo
-    messagebox.showerror("Chyba přihlášení", "Uživatelské jméno nebylo nalezeno!")
-    return False # Uživatelské jméno nebylo nalezeno
+    # Start the Tkinter event loop
+    main_app_window.mainloop()
+
+def create_login_widgets(parent_window):
+    """Creates and places login widgets onto the given parent window."""
+    global username_entry, password_entry # Make entries accessible
+
+    # Clear any existing widgets from the parent_window before drawing new ones
+    for widget in parent_window.winfo_children():
+        widget.destroy()
+
+    # Create a frame to better organize widgets within the window
+    login_frame = tk.Frame(parent_window)
+    login_frame.pack(expand=True, fill="both", padx=20, pady=20)
+
+    # Username Label and Entry
+    username_label = tk.Label(login_frame, text="Uživatelské jméno:")
+    username_label.grid(row=0, column=0, padx=5, pady=5, sticky="w")
+    username_entry = tk.Entry(login_frame)
+    username_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+
+    # Password Label and Entry
+    password_label = tk.Label(login_frame, text="Heslo:")
+    password_label.grid(row=1, column=0, padx=5, pady=5, sticky="w")
+    password_entry = tk.Entry(login_frame, show="*") # Show asterisks for password
+    password_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+
+    # Login Button
+    login_button = tk.Button(login_frame, text="Přihlásit se", command=login_button_click)
+    login_button.grid(row=2, column=0, columnspan=2, padx=5, pady=10, sticky="ew")
+
+    # Register Button
+    register_button = tk.Button(login_frame, text="Registrovat se", command=register_button_click)
+    register_button.grid(row=3, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+
+    # Configure the second column of the grid to expand horizontally
+    login_frame.grid_columnconfigure(1, weight=1)
 
 def login_button_click():
-    """Obsluhuje stisk tlačítka Přihlásit se."""
+    """Handles the login button click event."""
+    global logged_in_username, logged_in_user_id
+
     username = username_entry.get()
     password = password_entry.get()
 
-    if verify_login(username, password):
+    # Verify credentials using the database module
+    if database.verify_login(username, password):
+        logged_in_username = username
+        logged_in_user_id = database.get_user_id(username) # Get the user ID from the database
         messagebox.showinfo("Úspěch", "Přihlášení úspěšné!")
-        window.withdraw()  # Skryjeme přihlašovací okno
-
-        if verify_is_admin(username):
-            # Pokud je uživatel administrátor, zobrazíme administrační obrazovku
-            admin_screen.show_main_admin_page()
-            # Pro okna Toplevel (což admin_screen používá) není potřeba ukončovat hlavní proces.
-            # admin_screen se otevře jako nové okno v rámci stejného programu.
+        
+        # Determine if the user is an admin and show the appropriate screen
+        if database.is_admin(username):
+            main_app_window.withdraw() # Hide the main window temporarily
+            admin_screen.show_admin_page(main_app_window, logged_in_username, logged_in_user_id)
         else:
-            # Pokud není administrátor, spustíme uživatelskou obrazovku v novém procesu
-            # a ukončíme tento přihlašovací proces.
-            subprocess.Popen(["python", "user_screen.py", username])
-            sys.exit() # Ukončí aktuální proces přihlašovací obrazovky
+            main_app_window.withdraw() # Hide the main window temporarily
+            user_screen.show_user_page(main_app_window, logged_in_username, logged_in_user_id)
+    else:
+        messagebox.showerror("Chyba", "Neplatné uživatelské jméno nebo heslo.")
 
-# --- Vytvoření hlavního okna Tkinter ---
-window = tk.Tk()
-window.title("Přihlašovací obrazovka")
-window.geometry("300x200")
-window.configure(bg=BG_COLOR)
+def register_button_click():
+    """Handles the registration button click event."""
+    username = username_entry.get()
+    password = password_entry.get()
 
-# Konfigurace sloupce pro roztažení vstupních polí
-window.grid_columnconfigure(1, weight=1)
+    if not username or not password:
+        messagebox.showwarning("Upozornění", "Uživatelské jméno a heslo nemohou být prázdné.")
+        return
 
-# Uživatelské jméno
-username_label = tk.Label(window, text="Uživatelské jméno:", font=FONT, bg=BG_COLOR, fg=FG_COLOR)
-username_label.grid(row=0, column=0, padx=PADDING, pady=PADDING, sticky="w")
-username_entry = tk.Entry(window, font=FONT, bg="white", fg=FG_COLOR, relief="solid", bd=1)
-username_entry.grid(row=0, column=1, padx=PADDING, pady=PADDING, sticky="ew")
+    # Register the user as non-admin by default
+    if database.register_user(username, password, is_admin=0):
+        messagebox.showinfo("Úspěch", "Registrace úspěšná! Nyní se můžete přihlásit.")
+        # Optionally clear the input fields after successful registration
+        username_entry.delete(0, tk.END)
+        password_entry.delete(0, tk.END)
+    else:
+        messagebox.showerror("Chyba", "Registrace se nezdařila. Uživatelské jméno už možná existuje.")
 
-# Heslo
-password_label = tk.Label(window, text="Heslo:", font=FONT, bg=BG_COLOR, fg=FG_COLOR)
-password_label.grid(row=1, column=0, padx=PADDING, pady=PADDING, sticky="w")
-password_entry = tk.Entry(window, show="*", font=FONT, bg="white", fg=FG_COLOR, relief="solid", bd=1)
-password_entry.grid(row=1, column=1, padx=PADDING, pady=PADDING, sticky="ew")
-
-# Tlačítko Přihlásit se
-login_button = tk.Button(window, text="Přihlásit se", command=login_button_click,
-                         bg=BUTTON_BG, fg=BUTTON_FG, font=FONT, padx=BUTTON_PADDING_X, pady=BUTTON_PADDING_Y)
-login_button.grid(row=2, column=0, columnspan=2, padx=PADDING, pady=PADDING, sticky="ew")
-
-# Spuštění hlavní smyčky Tkinter
-window.mainloop()
+# This block ensures that the start_app() function is called only when
+# the script is executed directly (not when imported as a module).
+if __name__ == "__main__":
+    start_app()
