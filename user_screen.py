@@ -1,378 +1,277 @@
+# admin_screen.py
 import tkinter as tk
-from tkinter import ttk, simpledialog, messagebox
-import sys
-import json
-import requests
+from tkinter import ttk, messagebox, simpledialog
+import database 
 
 # --- Styling Constants (Minimalist Theme) ---
 BG_COLOR = "#f0f0f0"  # Light gray background
 FG_COLOR = "#333333"  # Dark gray foreground (text)
 BUTTON_BG = "#e0e0e0"  # Light gray button background
 BUTTON_FG = FG_COLOR
-BUTTON_ACTIVE_BG = "#d0d0d0"
-FONT = ("Segoe UI", 12)  # Clean, modern font
+BUTTON_ACTIVE_BG = "#d0f0d0" 
+FONT = ("Segoe UI", 12)  
 TITLE_FONT = ("Segoe UI", 16, "bold")
 PADDING = 10
 BUTTON_PADDING_X = 20
 BUTTON_PADDING_Y = 10
-ROUTE_BG_COLOR = "#fffacd"  # Light yellow background for route entries
-ROUTE_BORDER_COLOR = "#dda0dd"  # Purple border for route entries
-ROUTE_BORDER_WIDTH = 1  # Border width
 
-# Your TomTom API Key - REPLACE WITH YOUR ACTUAL KEY
-TOMTOM_API_KEY = "Guh742xz9ZSxx11iki85pe5bvprH9xL9" 
+# Global variables specific to the admin screen (will be set when opened)
+admin_root = None # This will be the main_app_window passed from login_screen
+admin_username = "Unknown Admin"
+admin_user_id = None
+user_tree = None 
+current_users_data = [] 
 
-def load_login_data(file):
-    """Loads the entire login data from the JSON file."""
-    try:
-        with open(file, 'r') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        print(f"Error: {file} not found!")
-        return {}
-    except json.JSONDecodeError:
-        print(f"Error: Invalid JSON format in {file}!")
-        return {}
+def refresh_user_list():
+    """Fetches all users from the database and updates the Treeview."""
+    global user_tree, current_users_data
+    
+    # Clear existing items
+    for item in user_tree.get_children():
+        user_tree.delete(item)
 
-def save_login_data(file, data):
-    """Saves the modified login data back to the JSON file."""
-    try:
-        with open(file, 'w') as f:
-            json.dump(data, f, indent=2)  # Use indent for readability
-    except Exception as e:
-        print(f"Error saving data to {file}: {e}")
+    current_users_data = database.get_all_users()
 
-def load_routes(data, username):
-    """Loads routes specific to the given username from the loaded data."""
-    for user_data in data.get("users", []):
-        if user_data.get("username") == username:
-            return user_data.get("trasy", [])  # Return list of routes
-    return []  # Return empty list if user or routes not found
+    for user in current_users_data:
+        admin_status = "Ano" if user['is_admin'] else "Ne"
+        user_tree.insert("", "end", iid=user['id'], 
+                         values=(user['username'], admin_status))
 
-def show_route_details():
-    """Displays the distance and destination of the selected route."""
-    selected_route_name = route_combo.get()
-    for route in user_routes:
-        if route["name"] == selected_route_name:
-            distance = route.get("distance", "N/A")
-            destination = route.get("destination", "N/A")
-            details_label.config(text=f"Cíl: {destination}, Vzdálenost: {distance}")
+def add_user_dialog():
+    """Opens a dialog to add a new user."""
+    dialog = tk.Toplevel(admin_root)
+    dialog.title("Přidat uživatele")
+    dialog.transient(admin_root) # Make dialog transient for the main window
+    dialog.grab_set() # Make dialog modal
+    dialog.geometry("300x200")
+    dialog.configure(bg=BG_COLOR)
+
+    # Center the dialog relative to the main window
+    dialog.update_idletasks()
+    x = admin_root.winfo_x() + (admin_root.winfo_width() // 2) - (dialog.winfo_width() // 2)
+    y = admin_root.winfo_y() + (admin_root.winfo_height() // 2) - (dialog.winfo_height() // 2)
+    dialog.geometry(f"+{x}+{y}")
+
+    tk.Label(dialog, text="Uživatelské jméno:", bg=BG_COLOR, fg=FG_COLOR, font=FONT).pack(pady=5)
+    username_entry = tk.Entry(dialog, font=FONT, bg="white", fg=FG_COLOR)
+    username_entry.pack(pady=2, padx=10, fill="x")
+
+    tk.Label(dialog, text="Heslo:", bg=BG_COLOR, fg=FG_COLOR, font=FONT).pack(pady=5)
+    password_entry = tk.Entry(dialog, show="*", font=FONT, bg="white", fg=FG_COLOR)
+    password_entry.pack(pady=2, padx=10, fill="x")
+
+    is_admin_var = tk.BooleanVar(dialog, value=False)
+    tk.Checkbutton(dialog, text="Administrátor?", variable=is_admin_var, bg=BG_COLOR, fg=FG_COLOR, font=FONT, selectcolor="white").pack(pady=5)
+
+    def save_new_user():
+        username = username_entry.get()
+        password = password_entry.get()
+        is_admin = 1 if is_admin_var.get() else 0
+
+        if not username or not password:
+            messagebox.showwarning("Upozornění", "Vyplňte uživatelské jméno a heslo.", parent=dialog)
             return
-    details_label.config(text="Vyberte trasu")
 
-def add_route():
-    """Prompts the user for route name and destination, then calculates and adds distance automatically."""
-    new_name = simpledialog.askstring("Nová trasa", "Jméno trasy:", parent=root)
-    if not new_name:
-        return  # User cancelled
+        if database.register_user(username, password, is_admin):
+            messagebox.showinfo("Úspěch", "Uživatel úspěšně přidán!", parent=dialog)
+            dialog.destroy()
+            refresh_user_list()
+        else:
+            messagebox.showerror("Chyba", "Nepodařilo se přidat uživatele. Uživatelské jméno už možná existuje.", parent=dialog)
 
-    new_destination = simpledialog.askstring("Nová trasa", "Cíl:", parent=root)
-    if not new_destination:
+    ttk.Button(dialog, text="Přidat uživatele", command=save_new_user).pack(pady=10)
+    dialog.protocol("WM_DELETE_WINDOW", dialog.destroy) # Handle window close button
+    admin_root.wait_window(dialog) # Wait for dialog to close
+
+def edit_user_dialog():
+    """Opens a dialog to edit an existing user."""
+    selected_item = user_tree.focus()
+    if not selected_item:
+        messagebox.showwarning("Upozornění", "Vyberte uživatele k úpravě.", parent=admin_root)
         return
 
-    # Calculate the distance automatically using TomTom API
-    new_distance_km = calculate_tomtom_route_distance_from_prague(new_destination)
-    if new_distance_km is None:
-        # If calculation fails, do not add the route and inform the user
-        messagebox.showerror("Chyba", "Nepodařilo se vypočítat vzdálenost pro zadaný cíl. Zkontrolujte prosím adresu a API klíč.", parent=root)
+    user_id_to_edit = int(selected_item) # Treeview iid is the user_id
+
+    # Find the user data from the cached list
+    user_data = next((user for user in current_users_data if user['id'] == user_id_to_edit), None)
+    if not user_data:
+        messagebox.showerror("Chyba", "Uživatel nenalezen.", parent=admin_root)
         return
 
-    # Format the distance for display and storage
-    new_distance_str = f"{new_distance_km:.2f} km"
+    dialog = tk.Toplevel(admin_root)
+    dialog.title(f"Upravit uživatele: {user_data['username']}")
+    dialog.transient(admin_root)
+    dialog.grab_set()
+    dialog.geometry("300x200")
+    dialog.configure(bg=BG_COLOR)
 
-    new_route = {"name": new_name, "destination": new_destination, "distance": new_distance_str}
+    dialog.update_idletasks()
+    x = admin_root.winfo_x() + (admin_root.winfo_width() // 2) - (dialog.winfo_width() // 2)
+    y = admin_root.winfo_y() + (admin_root.winfo_height() // 2) - (dialog.winfo_height() // 2)
+    dialog.geometry(f"+{x}+{y}")
 
-    user_routes.append(new_route)
+    tk.Label(dialog, text="Uživatelské jméno:", bg=BG_COLOR, fg=FG_COLOR, font=FONT).pack(pady=5)
+    username_entry = tk.Entry(dialog, font=FONT, bg="white", fg=FG_COLOR)
+    username_entry.insert(0, user_data['username'])
+    username_entry.pack(pady=2, padx=10, fill="x")
 
-    # Update route_names for the dropdown
-    global route_names
-    route_names = [route["name"] for route in user_routes]
-    route_combo['values'] = route_names
+    tk.Label(dialog, text="Nové heslo (volitelné):", bg=BG_COLOR, fg=FG_COLOR, font=FONT).pack(pady=5)
+    password_entry = tk.Entry(dialog, show="*", font=FONT, bg="white", fg=FG_COLOR)
+    password_entry.pack(pady=2, padx=10, fill="x")
 
-    # Find the user and update their routes in the loaded data
-    for user_data in login_data["users"]:
-        if user_data["username"] == username:
-            user_data["trasy"] = user_routes
-            break
+    is_admin_var = tk.BooleanVar(dialog, value=user_data['is_admin'])
+    tk.Checkbutton(dialog, text="Administrátor?", variable=is_admin_var, bg=BG_COLOR, fg=FG_COLOR, font=FONT, selectcolor="white").pack(pady=5)
 
-    save_login_data("login.json", login_data)
-    messagebox.showinfo("Úspěch", "Trasa byla přidána.", parent=root)
-    update_route_table()  # Update the table after adding a route
+    def save_edited_user():
+        new_username = username_entry.get()
+        new_password = password_entry.get() # Could be empty if not changed
+        new_is_admin = 1 if is_admin_var.get() else 0
 
-def show_page2():
-    """Show page 2 (Vybrat trasu) and hide other pages."""
-    page1.pack_forget()
-    page3.pack_forget()
-    page4.pack_forget()
-    page2.pack(fill="both", expand=True)
+        if not new_username:
+            messagebox.showwarning("Upozornění", "Uživatelské jméno nemůže být prázdné.", parent=dialog)
+            return
+        
+        # Prevent admin from de-admining themselves if they are the only admin
+        if user_id_to_edit == admin_user_id and not new_is_admin:
+            if database.count_admins() == 1:
+                messagebox.showwarning("Upozornění", "Jste jediný administrátor. Nemůžete si odebrat administrátorská práva.", parent=dialog)
+                return
 
-def show_page1():
-    """Show page 1 (Dashboard) and hide other pages."""
-    page2.pack_forget()
-    page3.pack_forget()
-    page4.pack_forget()
-    page1.pack(fill="both", expand=True)
+        if database.update_user(user_id_to_edit, new_username, new_password if new_password else None, new_is_admin):
+            messagebox.showinfo("Úspěch", "Uživatel úspěšně aktualizován!", parent=dialog)
+            dialog.destroy()
+            refresh_user_list()
+        else:
+            messagebox.showerror("Chyba", "Nepodařilo se aktualizovat uživatele. Nové uživatelské jméno už možná existuje.", parent=dialog)
 
-def show_page3():
-    """Show page 3 (Správa tras) and hide other pages."""
-    page1.pack_forget()
-    page2.pack_forget()
-    page4.pack_forget()
-    page3.pack(fill="both", expand=True)
-    update_route_table()
+    ttk.Button(dialog, text="Uložit změny", command=save_edited_user).pack(pady=10)
+    dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+    admin_root.wait_window(dialog)
 
-def show_page4(route_index):
-    """Show page 4 (Edit Route) and hide other pages."""
-    global current_route_index
-    current_route_index = route_index
-    page1.pack_forget()
-    page2.pack_forget()
-    page3.pack_forget()
-    page4.pack(fill="both", expand=True)
-    update_edit_form()
+def delete_user_dialog():
+    """Confirms and deletes a user."""
+    selected_item = user_tree.focus()
+    if not selected_item:
+        messagebox.showwarning("Upozornění", "Vyberte uživatele ke smazání.", parent=admin_root)
+        return
 
-def update_route(route_index, new_name, new_destination, new_distance):
-    """Updates the route details in the data and saves it."""
-    user_routes[route_index]["name"] = new_name
-    user_routes[route_index]["destination"] = new_destination
-    user_routes[route_index]["distance"] = new_distance
-
-    global route_names
-    route_names = [route["name"] for route in user_routes]
-    route_combo['values'] = route_names
-
-    for user_data in login_data["users"]:
-        if user_data["username"] == username:
-            user_data["trasy"] = user_routes
-            break
-
-    save_login_data("login.json", login_data)
-    update_route_table()
-
-def update_edit_form():
-    """Updates the entry fields on the edit route page."""
-    route = user_routes[current_route_index]
-    name_entry.delete(0, tk.END)
-    name_entry.insert(0, route["name"])
-    destination_entry.delete(0, tk.END)
-    destination_entry.insert(0, route["destination"])
+    user_id_to_delete = int(selected_item)
     
-    # Distance is now auto-calculated, so this entry field will be updated after saving
-    # For initial display, we still show the stored distance
-    distance_entry.delete(0, tk.END)
-    distance_entry.insert(0, route["distance"])
-
-
-def save_edited_route():
-    """Saves the edited route details, automatically recalculating distance."""
-    new_name = name_entry.get()
-    new_destination = destination_entry.get() # Get the potentially changed destination
-
-    if not new_name or not new_destination:
-        messagebox.showerror("Chyba", "Vyplňte jméno trasy a cíl.", parent=root)
+    # Prevent admin from deleting themselves
+    if user_id_to_delete == admin_user_id:
+        messagebox.showwarning("Upozornění", "Nemůžete smazat svůj vlastní účet.", parent=admin_root)
         return
 
-    # AUTOMATICALLY RECALCULATE DISTANCE based on the new_destination
-    # We use the same function as for adding a new route, assuming origin is Prague
-    recalculated_distance_km = calculate_tomtom_route_distance_from_prague(new_destination)
-    if recalculated_distance_km is None:
-        messagebox.showerror("Chyba", "Nepodařilo se přepočítat vzdálenost pro zadaný cíl. Zkontrolujte prosím adresu a API klíč.", parent=root)
+    # Prevent deleting the last admin
+    user_data = next((user for user in current_users_data if user['id'] == user_id_to_delete), None)
+    if user_data and user_data['is_admin'] and database.count_admins() == 1:
+        messagebox.showwarning("Upozornění", "Nemůžete smazat posledního administrátora v systému.", parent=admin_root)
         return
-    
-    new_distance_str = f"{recalculated_distance_km:.2f} km"
 
-    # Update the UI field for distance to reflect the new calculated value
-    distance_entry.delete(0, tk.END)
-    distance_entry.insert(0, new_distance_str)
+    if messagebox.askyesno("Potvrdit smazání", f"Opravdu chcete smazat uživatele s ID {user_id_to_delete} a VŠECHNY jeho trasy?", parent=admin_root):
+        if database.delete_user(user_id_to_delete):
+            messagebox.showinfo("Úspěch", "Uživatel byl smazán.", parent=admin_root)
+            refresh_user_list()
+        else:
+            messagebox.showerror("Chyba", "Nepodařilo se smazat uživatele.", parent=admin_root)
 
-    update_route(current_route_index, new_name, new_destination, new_distance_str)
-    messagebox.showinfo("Úspěch", "Trasa byla upravena.", parent=root)
-    show_page3()
+def show_admin_page(parent_window, username, user_id):
+    """
+    Sets up the admin page within the given parent_window.
+    This function is called from login_screen.py.
+    """
+    global admin_root, admin_username, admin_user_id, user_tree
 
-def update_route_table():
-    """Updates the table to display the user's routes."""
-    for widget in route_table_frame.winfo_children():
+    admin_root = parent_window # Use the main_app_window as the admin_root
+    admin_username = username
+    admin_user_id = user_id
+
+    admin_root.title(f"Administrátorský panel pro {admin_username}")
+    admin_root.geometry("800x600") # Resize for admin panel
+    admin_root.deiconify() # Show the window again
+
+    # Clear existing widgets from the parent_window (login screen)
+    for widget in admin_root.winfo_children():
         widget.destroy()
 
-    headers = ["Název", "Cíl", "Vzdálenost", ""]
-    for i, header in enumerate(headers):
-        header_label = tk.Label(route_table_frame, text=header, font=FONT, bg=BG_COLOR, fg=FG_COLOR)
-        header_label.grid(row=0, column=i, padx=5, pady=5, sticky="nsew")
+    # Create the main frame for the admin page content
+    admin_frame = tk.Frame(admin_root, bg=BG_COLOR)
+    admin_frame.pack(expand=True, fill="both", padx=PADDING, pady=PADDING)
 
-    for i, route in enumerate(user_routes):
-        route_entry_frame = tk.Frame(route_table_frame, bg=ROUTE_BG_COLOR,
-                                     highlightbackground=ROUTE_BORDER_COLOR,
-                                     highlightthickness=ROUTE_BORDER_WIDTH)
-        route_entry_frame.grid(row=i + 1, columnspan=len(headers), sticky="ew", padx=2, pady=2)
+    tk.Label(admin_frame, text=f"Vítejte v administrátorském panelu, {admin_username}!", font=TITLE_FONT, bg=BG_COLOR, fg=FG_COLOR).pack(pady=PADDING)
 
-        name_label = tk.Label(route_entry_frame, text=route["name"], font=FONT, bg=ROUTE_BG_COLOR, fg=FG_COLOR)
-        destination_label = tk.Label(route_entry_frame, text=route["destination"], font=FONT, bg=ROUTE_BG_COLOR, fg=FG_COLOR)
-        distance_label = tk.Label(route_entry_frame, text=route["distance"], font=FONT, bg=ROUTE_BG_COLOR, fg=FG_COLOR)
-        edit_button = tk.Button(route_entry_frame, text="Upravit",
-                                 command=lambda index=i: show_page4(index),
-                                 bg=BUTTON_BG, fg=BUTTON_FG, activebackground=BUTTON_ACTIVE_BG, font=FONT)
+    # --- User Management Section ---
+    user_management_frame = tk.LabelFrame(admin_frame, text="Správa uživatelů", bg=BG_COLOR, fg=FG_COLOR, font=TITLE_FONT)
+    user_management_frame.pack(pady=PADDING, padx=PADDING, fill="both", expand=True)
 
-        name_label.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
-        destination_label.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
-        distance_label.grid(row=0, column=2, padx=5, pady=5, sticky="nsew")
-        edit_button.grid(row=0, column=3, padx=5, pady=5)
+    # Treeview for displaying users
+    user_tree = ttk.Treeview(user_management_frame, columns=("username", "is_admin"), show="headings")
+    user_tree.heading("username", text="Uživatelské jméno")
+    user_tree.heading("is_admin", text="Admin")
+    
+    user_tree.column("username", width=200, anchor="center")
+    user_tree.column("is_admin", width=100, anchor="center")
+    
+    user_tree.pack(pady=PADDING, padx=PADDING, fill="both", expand=True)
 
-        route_entry_frame.columnconfigure(0, weight=1)
-        route_entry_frame.columnconfigure(1, weight=1)
-        route_entry_frame.columnconfigure(2, weight=1)
-        route_entry_frame.columnconfigure(3, weight=0)
+    # Scrollbar for Treeview
+    scrollbar = ttk.Scrollbar(user_tree, orient="vertical", command=user_tree.yview)
+    user_tree.configure(yscrollcommand=scrollbar.set)
+    scrollbar.pack(side="right", fill="y")
 
-    route_table_frame.columnconfigure(0, weight=1)
-    route_table_frame.columnconfigure(1, weight=1)
-    route_table_frame.columnconfigure(2, weight=1)
-    route_table_frame.columnconfigure(3, weight=0)
+    # Buttons for user actions
+    button_frame = tk.Frame(user_management_frame, bg=BG_COLOR)
+    button_frame.pack(pady=PADDING)
 
-# --- TomTom API Functions ---
-def geocode_address(address):
-    """
-    Geocodes an address using TomTom Search API to get its coordinates.
-    Returns coordinates as "lat,lon" string or None on failure.
-    """
-    geocode_url = f"https://api.tomtom.com/search/2/geocode/{requests.utils.quote(address)}.json?key={TOMTOM_API_KEY}"
-    try:
-        response = requests.get(geocode_url)
-        response.raise_for_status()
-        data = response.json()
-        if data and data.get('results'):
-            position = data['results'][0]['position']
-            return f"{position['lat']},{position['lon']}"
-        else:
-            return None
-    except requests.exceptions.RequestException:
-        return None
-    except json.JSONDecodeError:
-        return None
+    ttk.Button(button_frame, text="Přidat uživatele", command=add_user_dialog).pack(side="left", padx=5)
+    ttk.Button(button_frame, text="Upravit uživatele", command=edit_user_dialog).pack(side="left", padx=5)
+    ttk.Button(button_frame, text="Smazat uživatele", command=delete_user_dialog).pack(side="left", padx=5)
+    
+    # Configure Treeview style
+    style = ttk.Style()
+    style.configure("Treeview.Heading", font=FONT, background=BUTTON_BG, foreground=BUTTON_FG)
+    style.configure("Treeview", 
+                    font=FONT, 
+                    rowheight=25, 
+                    background="white", 
+                    foreground=FG_COLOR, 
+                    fieldbackground="white", 
+                    bordercolor="#cccccc", 
+                    borderwidth=1, 
+                    relief="solid")
+    style.map("Treeview", 
+              background=[("selected", "#347083")]) # Darker blue on select
+    
+    # Styles for buttons (optional, can be moved to a common config if desired)
+    style.configure("TButton", 
+                    font=FONT, 
+                    padding=BUTTON_PADDING_Y, 
+                    background=BUTTON_BG, 
+                    foreground=BUTTON_FG)
+    style.map("TButton", 
+              background=[("active", BUTTON_ACTIVE_BG)])
 
-def calculate_tomtom_route_distance_from_prague(destination_address):
-    """
-    Calculates the route distance from Prague to the given destination address.
-    Returns the distance in kilometers, or None on failure.
-    """
-    start_address = "Prague, Czechia" # Fixed starting point for all routes
+    refresh_user_list() # Populate the list on startup
 
-    start_coords = geocode_address(start_address)
-    destination_coords = geocode_address(destination_address)
+    # Back to Login button
+    back_button = ttk.Button(admin_frame, text="Zpět na přihlášení", command=lambda: go_back_to_login(admin_root))
+    back_button.pack(side="bottom", pady=PADDING)
 
-    if not start_coords or not destination_coords:
-        return None
+    # This part was `root.mainloop()` before, now it's managed by login_screen.py
+    # Don't call admin_root.mainloop() here. The mainloop is in login_screen.py
 
-    routing_url = (
-        f"https://api.tomtom.com/routing/1/calculateRoute/{start_coords}:{destination_coords}/json"
-        f"?key={TOMTOM_API_KEY}"
-    )
+def go_back_to_login(current_window):
+    """Destroys current screen content and returns to login."""
+    # Importing login_screen inside the function to avoid circular imports at top level
+    import login_screen 
 
-    try:
-        response = requests.get(routing_url)
-        response.raise_for_status()
-        route_data = response.json()
+    for widget in current_window.winfo_children():
+        widget.destroy()
+    current_window.geometry("300x200") # Reset size for login screen
+    current_window.title("Přihlašovací obrazovka")
+    login_screen.create_login_widgets(current_window) # Recreate login widgets
+    current_window.deiconify() # Show the window again if it was hidden
 
-        if route_data and route_data.get('routes'):
-            distance_meters = route_data['routes'][0]['summary']['lengthInMeters']
-            distance_km = distance_meters / 1000
-            return distance_km
-        else:
-            return None
-
-    except requests.exceptions.RequestException:
-        return None
-    except json.JSONDecodeError:
-        return None
-
-
-if __name__ == "__main__":
-    username = "Neznámý uživatel"
-    current_route_index = -1
-
-    if len(sys.argv) > 1:
-        username = sys.argv[1]
-        print(f"Uživatelské jméno přihlášeného uživatele: {username}")
-
-    login_data = load_login_data("login.json")
-    user_routes = load_routes(login_data, username)
-    route_names = [route["name"] for route in user_routes]
-
-    root = tk.Tk()
-    root.title(f"Uživatelská obrazovka pro {username}")
-    root.geometry("600x600")
-    root.configure(bg=BG_COLOR)
-
-    # --- Page 1 (Dashboard) ---
-    page1 = tk.Frame(root, bg=BG_COLOR)
-
-    welcome_label = tk.Label(page1, text=f"Vítejte, {username}!", font=TITLE_FONT, bg=BG_COLOR, fg=FG_COLOR)
-    welcome_label.pack(pady=PADDING)
-
-    spravovat_trasy_button = tk.Button(page1, text="Spravovat trasy", command=show_page3, padx=BUTTON_PADDING_X, pady=BUTTON_PADDING_Y,
-                                     bg=BUTTON_BG, fg=BUTTON_FG, activebackground=BUTTON_ACTIVE_BG, font=FONT)
-    spravovat_trasy_button.pack(pady=PADDING)
-
-    vybrat_trasu_button = tk.Button(page1, text="Vybrat trasu", command=show_page2, padx=BUTTON_PADDING_X, pady=BUTTON_PADDING_Y,
-                                  bg=BUTTON_BG, fg=BUTTON_FG, activebackground=BUTTON_ACTIVE_BG, font=FONT)
-    vybrat_trasu_button.pack(pady=PADDING)
-
-    # --- Page 2 (Vybrat trasu) ---
-    page2 = tk.Frame(root, bg=BG_COLOR)
-
-    route_label = tk.Label(page2, text="Vyberte trasu:", font=FONT, bg=BG_COLOR, fg=FG_COLOR)
-    route_label.pack(pady=PADDING)
-    route_combo = ttk.Combobox(page2, values=route_names, state="readonly", font=FONT)
-    route_combo.pack(pady=PADDING)
-    route_combo.bind("<<ComboboxSelected>>", lambda event: show_route_details())
-
-    details_label = tk.Label(page2, text="Vyberte trasu", font=FONT, bg=BG_COLOR, fg=FG_COLOR)
-    details_label.pack(pady=PADDING)
-
-    zpet_na_dashboard_button2 = tk.Button(page2, text="Zpět", command=show_page1, padx=BUTTON_PADDING_X, pady=BUTTON_PADDING_Y,
-                                          bg=BUTTON_BG, fg=BUTTON_FG, activebackground=BUTTON_ACTIVE_BG, font=FONT)
-    zpet_na_dashboard_button2.pack(side="bottom", pady=PADDING, fill="x")
-
-    # --- Page 3 (Spravovat trasy) ---
-    page3 = tk.Frame(root, bg=BG_COLOR)
-
-    pridat_trasu_button = tk.Button(page3, text="Přidat trasu", command=add_route, padx=BUTTON_PADDING_X, pady=BUTTON_PADDING_Y,
-                                     bg=BUTTON_BG, fg=BUTTON_FG, activebackground=BUTTON_ACTIVE_BG, font=FONT)
-    pridat_trasu_button.pack(pady=PADDING)
-
-    route_table_frame = tk.Frame(page3, bg=BG_COLOR)
-    route_table_frame.pack(pady=PADDING, fill="both", expand=True)
-
-    zpet_na_dashboard_button3 = tk.Button(page3, text="Zpět", command=show_page1, padx=BUTTON_PADDING_X, pady=BUTTON_PADDING_Y,
-                                          bg=BUTTON_BG, fg=BUTTON_FG, activebackground=BUTTON_ACTIVE_BG, font=FONT)
-    zpet_na_dashboard_button3.pack(side="bottom", pady=PADDING, fill="x")
-
-    # --- Page 4 (Edit Route) ---
-    page4 = tk.Frame(root, bg=BG_COLOR)
-
-    name_label = tk.Label(page4, text="Název:", font=FONT, bg=BG_COLOR, fg=FG_COLOR)
-    name_label.pack(pady=5)
-    name_entry = tk.Entry(page4, font=FONT, bg="white", fg=FG_COLOR, relief="solid", bd=1)
-    name_entry.pack(pady=5, fill="x", padx=PADDING)
-
-    destination_label = tk.Label(page4, text="Cíl:", font=FONT, bg=BG_COLOR, fg=FG_COLOR)
-    destination_label.pack(pady=5)
-    destination_entry = tk.Entry(page4, font=FONT, bg="white", fg=FG_COLOR, relief="solid", bd=1)
-    destination_entry.pack(pady=5, fill="x", padx=PADDING)
-
-    distance_label = tk.Label(page4, text="Vzdálenost:", font=FONT, bg=BG_COLOR, fg=FG_COLOR)
-    distance_label.pack(pady=5)
-    distance_entry = tk.Entry(page4, font=FONT, bg="lightgray", fg=FG_COLOR, relief="solid", bd=1, state="readonly") # Changed to readonly
-    distance_entry.pack(pady=5, fill="x", padx=PADDING)
-
-    save_button = tk.Button(page4, text="Uložit", command=save_edited_route, padx=BUTTON_PADDING_X, pady=BUTTON_PADDING_Y,
-                             bg=BUTTON_BG, fg=BUTTON_FG, activebackground=BUTTON_ACTIVE_BG, font=FONT)
-    save_button.pack(pady=10)
-
-    zpet_na_spravu_button = tk.Button(page4, text="Zpět na správu tras", command=show_page3, padx=BUTTON_PADDING_X, pady=BUTTON_PADDING_Y,
-                                      bg=BUTTON_BG, fg=BUTTON_FG, activebackground=BUTTON_ACTIVE_BG, font=FONT)
-    zpet_na_spravu_button.pack(side="bottom", pady=PADDING, fill="x")
-
-    # Initially show page 1
-    show_page1()
-
-    # Run the Tkinter event loop
-    root.mainloop()
+# The __main__ block is removed as this module is now imported and its functions called.
+# if __name__ == "__main__":
+#     pass
