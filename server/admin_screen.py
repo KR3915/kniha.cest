@@ -22,180 +22,286 @@ admin_user_id = None
 user_tree = None 
 current_users_data = [] 
 
-def refresh_user_list():
-    """Fetches all users from the database and updates the Treeview."""
+# Nová globální proměnná pro uložení funkce pro návrat na login
+_create_login_widgets_callback = None 
+
+def show_admin_page(parent_window, username, user_id, create_login_widgets_callback_func):
+    """
+    Zobrazí administrátorský panel.
+    :param parent_window: Kořenové okno Tkinteru.
+    :param username: Uživatelské jméno přihlášeného administrátora.
+    :param user_id: ID přihlášeného administrátora.
+    :param create_login_widgets_callback_func: Callback funkce z login_screen pro návrat zpět na login.
+    """
+    global admin_root, admin_username, admin_user_id, user_tree, _create_login_widgets_callback
+
+    admin_root = parent_window
+    admin_username = username
+    admin_user_id = user_id
+    _create_login_widgets_callback = create_login_widgets_callback_func # Uložení callbacku
+
+    admin_root.title(f"Administrátorský panel pro {admin_username}")
+    admin_root.geometry("800x600")
+    admin_root.deiconify() # Ensure the window is visible
+
+    for widget in admin_root.winfo_children():
+        widget.destroy()
+
+    create_admin_page_layout()
+
+def create_admin_page_layout():
+    """Vytvoří rozložení prvků administrátorského panelu."""
     global user_tree, current_users_data
-    
-    # Clear existing items
+
+    style = ttk.Style(admin_root)
+    style.theme_use("clam")
+    style.configure("TFrame", background=BG_COLOR)
+    style.configure("TLabel", background=BG_COLOR, foreground=FG_COLOR, font=FONT)
+    style.configure("TEntry", font=FONT)
+    style.configure("TButton", font=FONT, padding=(BUTTON_PADDING_X, BUTTON_PADDING_Y), background=BUTTON_BG, foreground=BUTTON_FG)
+    style.map("TButton", background=[("active", BUTTON_ACTIVE_BG)])
+    style.configure("Treeview", font=FONT, rowheight=25)
+    style.configure("Treeview.Heading", font=(FONT[0], FONT[1], "bold"))
+    style.map("Treeview", background=[("selected", "#347083")])
+    style.configure("Red.TButton", background="red", foreground="white") # Speciální styl pro mazací tlačítko
+    style.map("Red.TButton", background=[("active", "#cc0000")])
+
+
+    admin_frame = ttk.Frame(admin_root, padding=PADDING)
+    admin_frame.pack(fill="both", expand=True)
+
+    title_label = ttk.Label(admin_frame, text=f"Administrace uživatelů - {admin_username}", font=TITLE_FONT)
+    title_label.pack(pady=(0, PADDING * 2))
+
+    # Treeview pro zobrazení uživatelů
+    user_tree_frame = ttk.Frame(admin_frame)
+    user_tree_frame.pack(fill="both", expand=True, pady=PADDING)
+
+    columns = ("id", "username", "is_admin")
+    user_tree = ttk.Treeview(user_tree_frame, columns=columns, show="headings")
+    user_tree.pack(side="left", fill="both", expand=True)
+
+    user_tree.heading("id", text="ID")
+    user_tree.heading("username", text="Uživatelské jméno")
+    user_tree.heading("is_admin", text="Admin")
+
+    user_tree.column("id", width=50, anchor="center")
+    user_tree.column("username", width=200, stretch=tk.YES)
+    user_tree.column("is_admin", width=100, anchor="center")
+
+    scrollbar = ttk.Scrollbar(user_tree_frame, orient="vertical", command=user_tree.yview)
+    user_tree.configure(yscrollcommand=scrollbar.set)
+    scrollbar.pack(side="right", fill="y")
+
+    # Tlačítka pro správu uživatelů
+    button_frame = ttk.Frame(admin_frame, padding=(0, PADDING))
+    button_frame.pack(fill="x", pady=PADDING)
+
+    ttk.Button(button_frame, text="Přidat uživatele", command=add_user_dialog).pack(side="left", padx=5, expand=True)
+    ttk.Button(button_frame, text="Upravit uživatele", command=edit_user_dialog).pack(side="left", padx=5, expand=True)
+    ttk.Button(button_frame, text="Smazat uživatele", command=delete_user_confirm, style="Red.TButton").pack(side="left", padx=5, expand=True)
+    ttk.Button(button_frame, text="Aktualizovat seznam", command=refresh_user_list).pack(side="left", padx=5, expand=True)
+
+    refresh_user_list() # Načte seznam uživatelů při spuštění
+
+    # Back to Login button
+    back_button = ttk.Button(admin_frame, text="Zpět na přihlášení", command=go_back_to_login)
+    back_button.pack(side="bottom", pady=PADDING)
+
+
+def refresh_user_list():
+    """Načte všechny uživatele z databáze a aktualizuje Treeview."""
+    global user_tree, current_users_data
+
     for item in user_tree.get_children():
         user_tree.delete(item)
 
     current_users_data = database.get_all_users()
 
     for user in current_users_data:
-        admin_status = "Ano" if user["is_admin"] else "Ne"
-        user_tree.insert("", "end", iid=str(user["id"]), 
-                         values=(user["username"], admin_status))
+        admin_status = "Ano" if user.get('is_admin') else "Ne"
+        user_tree.insert("", "end", values=(user.get('id'), user.get('username'), admin_status))
 
-def toggle_admin_status():
-    """Toggles admin status for the selected user."""
+
+def add_user_dialog():
+    """Zobrazí dialog pro přidání nového uživatele."""
+    dialog = tk.Toplevel(admin_root)
+    dialog.title("Přidat nového uživatele")
+    dialog.transient(admin_root)
+    dialog.grab_set()
+    dialog.geometry("300x200")
+    dialog.resizable(False, False)
+    dialog.configure(bg=BG_COLOR)
+
+    dialog_frame = ttk.Frame(dialog, padding=PADDING)
+    dialog_frame.pack(fill="both", expand=True)
+
+    ttk.Label(dialog_frame, text="Uživatelské jméno:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+    username_entry = ttk.Entry(dialog_frame)
+    username_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+
+    ttk.Label(dialog_frame, text="Heslo:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+    password_entry = ttk.Entry(dialog_frame, show="*")
+    password_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+
+    is_admin_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(dialog_frame, text="Administrátor", variable=is_admin_var).grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky="w")
+
+    dialog_frame.grid_columnconfigure(1, weight=1)
+
+    def save_user():
+        username = username_entry.get().strip()
+        password = password_entry.get().strip()
+        is_admin = is_admin_var.get()
+
+        if not username or not password:
+            messagebox.showwarning("Upozornění", "Uživatelské jméno a heslo nemohou být prázdné.", parent=dialog)
+            return
+
+        if is_admin and database.count_admins() >= 3:
+            messagebox.showwarning("Upozornění", "Maximální počet administrátorů (3) byl dosažen.", parent=dialog)
+            # Dovolíme přidat uživatele, ale s is_admin=False, pokud je limit dosažen
+            is_admin = False
+            messagebox.showinfo("Informace", "Uživatel bude přidán jako běžný uživatel, protože byl dosažen limit administrátorů.", parent=dialog)
+
+
+        if database.register_user(username, password, is_admin):
+            messagebox.showinfo("Úspěch", "Uživatel úspěšně přidán.", parent=dialog)
+            dialog.destroy()
+            refresh_user_list()
+        else:
+            messagebox.showerror("Chyba", "Nepodařilo se přidat uživatele. Uživatelské jméno již může existovat.", parent=dialog)
+
+    ttk.Button(dialog_frame, text="Uložit", command=save_user).grid(row=3, column=0, columnspan=2, pady=10)
+
+    dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+    dialog.wait_window()
+
+
+def edit_user_dialog():
+    """Zobrazí dialog pro úpravu vybraného uživatele."""
     selected_item = user_tree.selection()
     if not selected_item:
-        messagebox.showwarning("Upozornění", "Vyberte uživatele k úpravě.", parent=admin_root)
+        messagebox.showwarning("Upozornění", "Vyberte prosím uživatele k úpravě.", parent=admin_root)
         return
 
-    user_id_to_toggle = int(selected_item[0]) 
+    # Get the ID of the selected user from the treeview
+    selected_user_id = user_tree.item(selected_item, "values")[0]
 
-    selected_user = next((user for user in current_users_data if user["id"] == user_id_to_toggle), None)
+    # Find the full user data from the cached list
+    selected_user_data = next((user for user in current_users_data if user['id'] == selected_user_id), None)
 
-    if not selected_user:
-        messagebox.showerror("Chyba", "Uživatel nenalezen v datech.", parent=admin_root)
+    if not selected_user_data:
+        messagebox.showerror("Chyba", "Nepodařilo se najít data pro vybraného uživatele.", parent=admin_root)
         return
 
-    if user_id_to_toggle == admin_user_id:
-        messagebox.showwarning("Upozornění", "Nemůžete si odebrat vlastní administrátorská práva.", parent=admin_root)
-        return
+    dialog = tk.Toplevel(admin_root)
+    dialog.title(f"Upravit uživatele: {selected_user_data['username']}")
+    dialog.transient(admin_root)
+    dialog.grab_set()
+    dialog.geometry("300x250")
+    dialog.resizable(False, False)
+    dialog.configure(bg=BG_COLOR)
 
-    new_admin_status = not selected_user["is_admin"] 
+    dialog_frame = ttk.Frame(dialog, padding=PADDING)
+    dialog_frame.pack(fill="both", expand=True)
 
-    if database.update_user_admin_status(user_id_to_toggle, new_admin_status):
-        messagebox.showinfo("Úspěch", f"Admin status pro uživatele '{selected_user['username']}' byl změněn na {'Admin' if new_admin_status else 'Uživatel'}.", parent=admin_root)
-        refresh_user_list() 
-    else:
-        messagebox.showerror("Chyba", "Nepodařilo se změnit admin status.", parent=admin_root)
+    ttk.Label(dialog_frame, text="Uživatelské jméno:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+    username_entry = ttk.Entry(dialog_frame)
+    username_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+    username_entry.insert(0, selected_user_data['username'])
 
-def delete_selected_user():
-    """Deletes the selected user from the database."""
+    ttk.Label(dialog_frame, text="Nové heslo (ponechte prázdné pro zachování):").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+    password_entry = ttk.Entry(dialog_frame, show="*")
+    password_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+
+    is_admin_var = tk.BooleanVar(value=selected_user_data['is_admin'])
+    ttk.Checkbutton(dialog_frame, text="Administrátor", variable=is_admin_var).grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky="w")
+
+    dialog_frame.grid_columnconfigure(1, weight=1)
+
+    def save_changes():
+        new_username = username_entry.get().strip()
+        new_password = password_entry.get().strip()
+        new_is_admin = is_admin_var.get()
+
+        if not new_username:
+            messagebox.showwarning("Upozornění", "Uživatelské jméno nemůže být prázdné.", parent=dialog)
+            return
+
+        # Check admin count if trying to change admin status
+        if new_is_admin and not selected_user_data['is_admin']: # Trying to make non-admin into admin
+            if database.count_admins() >= 3:
+                messagebox.showwarning("Upozornění", "Maximální počet administrátorů (3) byl dosažen. Uživatel nemůže být nastaven jako administrátor.", parent=dialog)
+                new_is_admin = False # Prevent setting as admin if limit reached
+
+        # If user is admin and trying to become non-admin, ensure there's at least one other admin
+        if not new_is_admin and selected_user_data['is_admin']:
+            if database.count_admins() <= 1:
+                messagebox.showwarning("Upozornění", "Nemůžete odebrat administrátorská práva poslednímu administrátorovi.", parent=dialog)
+                return # Stop the process if it's the last admin
+
+
+        # Pass None if no change for username/password
+        username_to_update = new_username if new_username != selected_user_data['username'] else None
+        password_to_update = new_password if new_password else None # Only update if new_password is not empty
+
+        if database.update_user(selected_user_id, username_to_update, password_to_update, new_is_admin):
+            messagebox.showinfo("Úspěch", "Uživatel úspěšně aktualizován.", parent=dialog)
+            dialog.destroy()
+            refresh_user_list()
+        else:
+            messagebox.showerror("Chyba", "Nepodařilo se aktualizovat uživatele. Uživatelské jméno již může existovat.", parent=dialog)
+
+
+    ttk.Button(dialog_frame, text="Uložit změny", command=save_changes).grid(row=3, column=0, columnspan=2, pady=10)
+
+    dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+    dialog.wait_window()
+
+def delete_user_confirm():
+    """Potvrdí a smaže vybraného uživatele."""
     selected_item = user_tree.selection()
     if not selected_item:
-        messagebox.showwarning("Upozornění", "Vyberte uživatele ke smazání.", parent=admin_root)
+        messagebox.showwarning("Upozornění", "Vyberte prosím uživatele ke smazání.", parent=admin_root)
         return
 
-    user_id_to_delete = int(selected_item[0]) 
+    selected_user_id = user_tree.item(selected_item, "values")[0]
+    selected_username = user_tree.item(selected_item, "values")[1]
+    is_admin_to_delete = user_tree.item(selected_item, "values")[2] == "Ano" # Convert 'Ano'/'Ne' to boolean
 
-    selected_user = next((user for user in current_users_data if user["id"] == user_id_to_delete), None)
-    if not selected_user:
-        messagebox.showerror("Chyba", "Uživatel nenalezen v datech.", parent=admin_root)
+    # Prevent deleting the currently logged-in admin
+    if selected_user_id == admin_user_id:
+        messagebox.showwarning("Upozornění", "Nemůžete smazat sám sebe jako přihlášeného administrátora.", parent=admin_root)
         return
 
-    if user_id_to_delete == admin_user_id:
-        messagebox.showwarning("Upozornění", "Nemůžete smazat svůj vlastní účet z této obrazovky.", parent=admin_root)
+    # Prevent deleting the last admin if it's an admin
+    if is_admin_to_delete and database.count_admins() <= 1:
+        messagebox.showwarning("Upozornění", "Nemůžete smazat posledního administrátora v systému.", parent=admin_root)
         return
 
-    if messagebox.askyesno("Potvrdit smazání", f"Opravdu chcete smazat uživatele '{selected_user['username']}' a všechny jeho trasy?", parent=admin_root):
-        if database.delete_user(user_id_to_delete):
-            messagebox.showinfo("Úspěch", f"Uživatel '{selected_user['username']}' byl smazán.", parent=admin_root)
-            refresh_user_list() 
+    response = messagebox.askyesno("Potvrdit smazání", f"Opravdu chcete smazat uživatele '{selected_username}'? Všechny jeho trasy budou také smazány.", parent=admin_root)
+    if response:
+        if database.delete_user(selected_user_id):
+            messagebox.showinfo("Úspěch", "Uživatel a jeho trasy byly úspěšně smazány.", parent=admin_root)
+            refresh_user_list()
         else:
             messagebox.showerror("Chyba", "Nepodařilo se smazat uživatele.", parent=admin_root)
 
+def go_back_to_login():
+    """Destroys current screen content and returns to login using the stored callback."""
+    global admin_root, _create_login_widgets_callback
 
-def add_new_user():
-    """Allows admin to add a new user (non-admin by default)."""
-    username = simpledialog.askstring("Přidat uživatele", "Uživatelské jméno:", parent=admin_root)
-    if not username:
-        return
-    password = simpledialog.askstring("Přidat uživatele", "Heslo:", show='*', parent=admin_root)
-    if not password:
-        return
-
-    if database.register_user(username, password, is_admin=0): 
-        messagebox.showinfo("Úspěch", f"Uživatel '{username}' byl úspěšně přidán.", parent=admin_root)
-        refresh_user_list()
-    else:
-        messagebox.showerror("Chyba", "Nepodařilo se přidat uživatele. Uživatelské jméno už možná existuje.", parent=admin_root)
-
-def show_admin_page(parent_window, username, user_id):
-    """
-    Sets up the admin page within the given parent_window.
-    This function is called from login_screen.py.
-    """
-    global admin_root, admin_username, admin_user_id, user_tree
-
-    admin_root = parent_window # Use the main_app_window as the admin_root
-    admin_username = username
-    admin_user_id = user_id
-
-    admin_root.title(f"Admin Panel pro {admin_username}")
-    admin_root.geometry("700x500") # Resize for admin panel
-    admin_root.deiconify() # Show the window again
-
-    # Clear existing widgets from the parent_window (login screen)
     for widget in admin_root.winfo_children():
         widget.destroy()
-
-    # Create a new frame for the admin content
-    admin_frame = tk.Frame(admin_root, bg=BG_COLOR)
-    admin_frame.pack(expand=True, fill="both")
-
-    # Title
-    tk.Label(admin_frame, text="Správa uživatelů", font=TITLE_FONT, bg=BG_COLOR, fg=FG_COLOR).pack(pady=PADDING)
-
-    # Buttons for actions
-    button_frame = tk.Frame(admin_frame, bg=BG_COLOR)
-    button_frame.pack(pady=PADDING)
-
-    ttk.Button(button_frame, text="Přidat nového uživatele", command=add_new_user).pack(side=tk.LEFT, padx=5)
-    ttk.Button(button_frame, text="Přepnout Admin Status", command=toggle_admin_status).pack(side=tk.LEFT, padx=5)
-    ttk.Button(button_frame, text="Smazat uživatele", command=delete_selected_user, style="Red.TButton").pack(side=tk.LEFT, padx=5)
-
-    # Treeview for displaying users
-    tree_frame = tk.Frame(admin_frame, bg=BG_COLOR)
-    tree_frame.pack(pady=PADDING, padx=PADDING, fill="both", expand=True)
-
-    tree_scroll = ttk.Scrollbar(tree_frame)
-    tree_scroll.pack(side="right", fill="y")
-
-    user_tree = ttk.Treeview(tree_frame, yscrollcommand=tree_scroll.set, selectmode="browse")
-    user_tree.pack(fill="both", expand=True)
-    tree_scroll.config(command=user_tree.yview)
-
-    user_tree['columns'] = ("Username", "Is Admin")
-    user_tree.column("#0", width=0, stretch=tk.NO) 
-    user_tree.column("Username", anchor="w", width=250)
-    user_tree.column("Is Admin", anchor="center", width=100)
-
-    user_tree.heading("#0", text="", anchor="w")
-    user_tree.heading("Username", text="Uživatelské jméno", anchor="w")
-    user_tree.heading("Is Admin", text="Admin", anchor="center")
-
-    # Apply Treeview styling
-    style = ttk.Style()
-    style.theme_use("clam")
-    style.configure("Treeview", 
-                    background="#FFFFFF", 
-                    foreground="#333333", 
-                    rowheight=25, 
-                    fieldbackground="#FFFFFF",
-                    font=FONT)
-    style.map("Treeview", 
-              background=[("selected", "#347083")])
-    style.configure("Red.TButton", background="red", foreground="white") 
-    style.map("Red.TButton", background=[("active", "#cc0000")])
-
-    refresh_user_list() # Populate the list on startup
-
-    # Back to Login button
-    back_button = ttk.Button(admin_frame, text="Zpět na přihlášení", command=lambda: go_back_to_login(admin_root))
-    back_button.pack(side="bottom", pady=PADDING)
-
-    # This part was `root.mainloop()` before, now it's managed by login_screen.py
-    # Don't call admin_root.mainloop() here. The mainloop is in login_screen.py
-
-def go_back_to_login(current_window):
-    """Destroys current screen content and returns to login."""
-    # Importing login_screen inside the function to avoid circular imports at top level
-    import login_screen 
-
-    for widget in current_window.winfo_children():
-        widget.destroy()
-    current_window.geometry("300x200") # Reset size for login screen
-    current_window.title("Přihlašovací obrazovka")
-    login_screen.create_login_widgets(current_window) # Recreate login widgets
-    current_window.deiconify() # Show the window again if it was hidden
-
-# The __main__ block is removed as this module is now imported and its functions called.
-# if __name__ == "__main__":
-#     # This block would only run if admin_screen.py was executed directly,
-#     # but now it's managed by login_screen.py
-#     pass
+    admin_root.geometry("300x200") # Reset size for login screen
+    admin_root.title("Přihlašovací obrazovka")
+    
+    # Zde voláme uloženou callback funkci, místo importu login_screen
+    if _create_login_widgets_callback:
+        _create_login_widgets_callback() # Call the callback without arguments, as it's lambda: create_login_ui(main_app_window)
+    else:
+        # Fallback, pokud by z nějakého důvodu callback nebyl nastaven
+        messagebox.showerror("Chyba", "Nelze se vrátit na přihlašovací obrazovku. Chybí callback.")
+    
+    admin_root.deiconify() # Show the window again if it was hidden

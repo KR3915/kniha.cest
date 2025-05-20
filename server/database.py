@@ -54,7 +54,7 @@ def initialize_db():
                 distance TEXT,
                 needs_fuel BOOLEAN NOT NULL DEFAULT FALSE,
                 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
-                UNIQUE(user_id, name)
+                UNIQUE(user_id, name) -- Ensure unique route names per user
             );
         """)
         conn.commit()
@@ -92,21 +92,29 @@ def register_user(username, password, is_admin=0):
         conn.close()
 
 def verify_login(username, password):
-    """Ověří přihlašovací údaje uživatele."""
+    """
+    Ověří přihlašovací údaje uživatele.
+    Pokud je přihlášení úspěšné, vrátí slovník s 'id', 'username' a 'is_admin'.
+    Jinak vrátí None.
+    """
     conn = get_db_connection()
-    if conn is None: return False
+    if conn is None: return None
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT password FROM users WHERE username = %s;", (username,))
+        cursor.execute("SELECT id, username, password, is_admin FROM users WHERE username = %s;", (username,))
         result = cursor.fetchone()
         if result:
-            stored_hashed_password = result[0].encode('utf-8')
-            if bcrypt.checkpw(password.encode('utf-8'), stored_hashed_password):
-                return True
-        return False
+            user_id, db_username, stored_hashed_password, is_admin_status = result
+            if bcrypt.checkpw(password.encode('utf-8'), stored_hashed_password.encode('utf-8')):
+                return {
+                    'id': user_id,
+                    'username': db_username,
+                    'is_admin': bool(is_admin_status)
+                }
+        return None
     except psycopg2.Error as e:
         print(f"Chyba při ověřování přihlášení: {e}")
-        return False
+        return None
     finally:
         cursor.close()
         conn.close()
@@ -127,7 +135,7 @@ def get_user_id(username):
         cursor.close()
         conn.close()
 
-def is_admin(username):
+def is_admin(username): # Tato funkce už by neměla být přímo volána z login_screen.py, verify_login je lepší
     """Zkontroluje, zda je uživatel administrátor."""
     conn = get_db_connection()
     if conn is None: return False
@@ -142,7 +150,7 @@ def is_admin(username):
     finally:
         cursor.close()
         conn.close()
- 
+
 def add_route(user_id, name, start_location, destination, distance, needs_fuel):
     """Přidá novou trasu do databáze."""
     conn = get_db_connection()
@@ -198,8 +206,6 @@ def update_route(route_id, name, start_location, destination, distance, needs_fu
         conn.commit()
         return True
     except psycopg2.errors.UniqueViolation:
-        # Note: unique constraint is (user_id, name), this error means a different user might have same route name
-        # For a more precise error message, you might need to check for existing route by name for *this* user_id first
         print(f"Trasa s názvem '{name}' již existuje pro jiného uživatele nebo aktualizace vytvořila duplikát.")
         conn.rollback()
         return False
@@ -253,7 +259,7 @@ def update_user(user_id, new_username=None, new_password=None, new_is_admin=None
     try:
         updates = []
         params = []
-        if new_username is not None: # Check for None, not just empty string
+        if new_username is not None:
             updates.append("username = %s")
             params.append(new_username)
         if new_password is not None:
@@ -263,8 +269,8 @@ def update_user(user_id, new_username=None, new_password=None, new_is_admin=None
         if new_is_admin is not None:
             updates.append("is_admin = %s")
             params.append(bool(new_is_admin))
-        
-        if not updates: # Nothing to update
+
+        if not updates:
             return True
 
         params.append(user_id)
@@ -317,10 +323,8 @@ def count_admins():
         cursor.close()
         conn.close()
 
-# --- Pomocná funkce pro migraci (nebo jinde, kde je potřeba) ---
-# Tuto funkci je potřeba, protože get_routes_by_user vrací list všech tras,
-# ale migrace potřebuje zkontrolovat existenci konkrétní trasy.
 def get_route_by_name(user_id, route_name):
+    """Pomocná funkce pro migraci: Získá trasu podle uživatele a názvu."""
     conn = get_db_connection()
     if conn is None: return None
     cursor = conn.cursor()
@@ -335,7 +339,6 @@ def get_route_by_name(user_id, route_name):
         cursor.close()
         conn.close()
 
-# --- Migrace z JSON na PostgreSQL (POUZE JEDNOU!) ---
 def migrate_json_to_postgresql(json_file):
     """
     Migruje uživatele a jejich trasy z JSON souboru do PostgreSQL databáze.
@@ -344,32 +347,34 @@ def migrate_json_to_postgresql(json_file):
     try:
         with open(json_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        
+
         users_to_migrate = data.get("users", [])
-        
+
         for user_data in users_to_migrate:
             username = user_data.get("username")
             password = user_data.get("password")
-            is_admin = int(user_data.get("admin", "0")) 
-            
+            is_admin = int(user_data.get("admin", "0"))
+
             if username and password:
-                # Zkontrolovat, zda uživatel již existuje, aby se zabránilo duplicitám
-                if not get_user_id(username): 
+                # Zkontrolovat, zda uživatel již existuje
+                existing_user_id = get_user_id(username)
+                if not existing_user_id:
+                    # register_user vrací True/False, ne ID
                     if register_user(username, password, is_admin):
                         user_id = get_user_id(username) # Získat ID nově vytvořeného uživatele
-                        
+
                         # Migrace tras pro tohoto uživatele
-                        user_routes = user_data.get("trasy", []) 
+                        user_routes = user_data.get("trasy", [])
                         for route in user_routes:
                             route_name = route.get("name")
-                            start_location = route.get("start_location", "") 
+                            start_location = route.get("start_location", "")
                             destination = route.get("destination")
                             distance = route.get("distance")
-                            needs_fuel = route.get("needs_fuel", 0) 
-                            
+                            needs_fuel = route.get("needs_fuel", 0)
+
                             if route_name and destination and distance:
                                 # Zkontrolovat duplicitní trasy pro tohoto uživatele
-                                if not get_route_by_name(user_id, route_name): 
+                                if not get_route_by_name(user_id, route_name):
                                     add_route(user_id, route_name, start_location, destination, distance, needs_fuel)
                                 else:
                                     print(f"Skipping existing route '{route_name}' for user '{username}' during migration.")
@@ -398,7 +403,6 @@ if __name__ == "__main__":
     # 1. Pokud máte existující login.json a chcete z něj importovat uživatele:
     #    Odkomentujte řádek níže, spusťte tento soubor JEDNOU pomocí `python database.py`.
     #    Po úspěšné migraci, ZAKOMENTUJTE HO ZNOVU, aby se nespouštěl pokaždé.
-    migrate_json_to_postgresql("login.json")
+    # migrate_json_to_postgresql("login.json")
 
-    # 2. Žádná další akce zde není obvykle potřeba, protože bcrypt se používá při registraci.
     pass
