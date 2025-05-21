@@ -5,7 +5,7 @@ import requests
 import database
 
 # --- Styling Constants (Minimalist Theme) ---
-BG_COLOR = "#f0f0f0"  # Light gray background
+BG_COLOR = "#dbd8d8"  # Light gray background
 FG_COLOR = "#333333"  # Dark gray foreground (text)
 BUTTON_BG = "#e0e0e0"  # Light gray button background
 BUTTON_FG = FG_COLOR
@@ -121,8 +121,8 @@ def create_user_page_layout():
 
     filter_fuel_var = tk.StringVar(value="Vše") # 'Vše', 'Ano', 'Ne'
     ttk.Radiobutton(filter_controls_frame, text="Po cestě tankovat: Vše", variable=filter_fuel_var, value="Vše").grid(row=0, column=2, padx=10, sticky="w")
-    ttk.Radiobutton(filter_controls_frame, text="Po cestě tankovat: Ano", variable=filter_fuel_var, value="Ano").grid(row=1, column=2, padx=10, sticky="w")
-    ttk.Radiobutton(filter_controls_frame, text="Po cestě tankovat: Ne", variable=filter_fuel_var, value="Ne").grid(row=2, column=2, padx=10, sticky="w")
+    ttk.Radiobutton(filter_controls_frame, text="Potřeba tankovat: Ano", variable=filter_fuel_var, value="Ano").grid(row=1, column=2, padx=10, sticky="w")
+    ttk.Radiobutton(filter_controls_frame, text="po cestě tankovat: Ne", variable=filter_fuel_var, value="Ne").grid(row=2, column=2, padx=10, sticky="w")
 
 
     filter_button = ttk.Button(filter_sort_frame, text="Filtrovat", command=apply_filters_and_sort)
