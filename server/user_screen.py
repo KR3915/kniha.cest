@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, simpledialog, messagebox
 import requests
-import database # Predpokladá sa, že máte súbor database.py
+import database 
 import json
 import math
 import random
