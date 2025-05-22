@@ -1,27 +1,27 @@
-# database.py (NOVÁ VERZE PRO POSTGRESQL)
+# database.py
 import psycopg2
 import bcrypt
-import json # Pro migraci z JSON, pokud ji budete chtít použít
+import json # Pro práci s JSON daty (pro sloupec gas_stations)
 
 # --- Konfigurace PostgreSQL připojení ---
 # TYTO HODNOTY MUSÍTE UPRAVIT PODLE VAŠEHO NASTAVENÍ POSTGRESQL!
 DB_CONFIG = {
     'host': 'localhost',
     'database': 'kniha_data',
-    'user': 'kniha_user', 
+    'user': 'kniha_user',
     'password': '4T7*hT4cB',
-    'port': '5432' 
+    'port': '5432'
 }
 
 def get_db_connection():
     """Získá a vrátí připojení k PostgreSQL databázi."""
+    conn = None
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         conn.autocommit = False # Nastavte na False pro explicitní transakce (commit/rollback)
         return conn
     except psycopg2.Error as e:
         print(f"Chyba připojení k databázi: {e}")
-        # V produkci byste zde mohli chtít vyvolat výjimku nebo logovat chybu
         return None
 
 def initialize_db():
@@ -33,96 +33,137 @@ def initialize_db():
 
     cursor = conn.cursor()
     try:
-        # Vytvořit tabulku users
+        # Tabulka uživatelů
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
                 username VARCHAR(255) UNIQUE NOT NULL,
-                password TEXT NOT NULL,
-                is_admin BOOLEAN NOT NULL DEFAULT FALSE
+                password_hash VARCHAR(255) NOT NULL,
+                is_admin BOOLEAN DEFAULT FALSE
             );
         """)
+        print("Tabulka 'users' již existuje nebo byla vytvořena.")
 
-        # Vytvořit tabulku routes
+        # Tabulka tras
+        # Zde je klíčová změna pro nové sloupce a typ JSONB pro gas_stations
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS routes (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
                 name VARCHAR(255) NOT NULL,
-                start_location TEXT,
-                destination TEXT NOT NULL,
-                distance TEXT,
-                needs_fuel BOOLEAN NOT NULL DEFAULT FALSE,
-                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
-                UNIQUE(user_id, name) -- Ensure unique route names per user
+                start_location VARCHAR(255) NOT NULL,
+                destination VARCHAR(255) NOT NULL,
+                distance VARCHAR(255), -- Uložíme jako text 'XXX.YY km'
+                travel_time INTEGER,    -- Nový sloupec pro čas cesty v sekundách
+                fuel_consumption NUMERIC, -- Nový sloupec pro spotřebu paliva
+                gas_stations JSONB,     -- Nový sloupec pro seznam čerpacích stanic (JSON pole)
+                needs_fuel BOOLEAN DEFAULT FALSE,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                UNIQUE (user_id, name) -- Zajišťuje, že uživatel nemůže mít dvě trasy se stejným názvem
             );
         """)
-        conn.commit()
-        print("PostgreSQL databáze inicializována a tabulky vytvořeny/ověřeny.")
-    except psycopg2.Error as e:
-        print(f"Chyba při inicializaci databáze PostgreSQL: {e}")
-        conn.rollback()
-    finally:
-        cursor.close()
-        conn.close()
+        print("Tabulka 'routes' již existuje nebo byla vytvořena.")
 
-def register_user(username, password, is_admin=0):
-    """Registruje nového uživatele do databáze s hašovaným heslem."""
-    hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        # --- Přidání nových sloupců, pokud ještě neexistují (pro existující databáze) ---
+        # Tato část zajistí, že se sloupce přidají, aniž by smazala tabulku.
+        # POZOR: PŘED SPUŠTĚNÍM NA PRODUKČNÍ DATABÁZI VŽDY ZÁLOHUJTE!
+
+        # Kontrola a přidání travel_time
+        cursor.execute("SELECT 1 FROM information_schema.columns WHERE table_name='routes' AND column_name='travel_time';")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE routes ADD COLUMN travel_time INTEGER;")
+            print("Sloupec 'travel_time' přidán do tabulky 'routes'.")
+
+        # Kontrola a přidání fuel_consumption
+        cursor.execute("SELECT 1 FROM information_schema.columns WHERE table_name='routes' AND column_name='fuel_consumption';")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE routes ADD COLUMN fuel_consumption NUMERIC;")
+            print("Sloupec 'fuel_consumption' přidán do tabulky 'routes'.")
+
+        # Kontrola a přidání gas_stations (POZOR na typ, mění se z BOOLEAN na JSONB!)
+        cursor.execute("SELECT data_type FROM information_schema.columns WHERE table_name='routes' AND column_name='gas_stations';")
+        column_info = cursor.fetchone()
+        if not column_info: # Sloupec neexistuje, přidáme JSONB
+            cursor.execute("ALTER TABLE routes ADD COLUMN gas_stations JSONB DEFAULT '[]';")
+            print("Sloupec 'gas_stations' (JSONB) přidán do tabulky 'routes'.")
+        elif column_info[0] != 'jsonb': # Sloupec existuje, ale není JSONB, musíme změnit typ
+            # TOTO JE KRITICKÉ: Pokud už máte data True/False, MUSÍTE JE NEJPRVE PŘEVÉST
+            # NEBO SMAZAT A ZNOVU VYTVOŘIT TABULKU, ABY SE POUŽIL NOVÝ TYP.
+            # Jednoduchá ALTER COLUMN TYPE nefunguje přímo z BOOLEAN na JSONB bez USING.
+            # Zde je bezpečnější přístup pro migrace:
+            print("Sloupec 'gas_stations' existuje, ale není typu JSONB. Prosím, změňte jeho typ MANUÁLNĚ v pgAdminu na JSONB, pokud chcete ukládat strukturovaná data, nebo zvažte jeho odstranění a znovuvytvoření tabulky.")
+            print("Příklad ruční změny v pgAdminu nebo SQL příkazem (POZOR NA DATA!):")
+            print("ALTER TABLE routes ALTER COLUMN gas_stations TYPE JSONB USING CASE WHEN gas_stations THEN '[]'::jsonb ELSE '[]'::jsonb END;")
+            print("Nebo pokud chcete jen přidat nový a zahodit starý:")
+            print("ALTER TABLE routes RENAME COLUMN gas_stations TO old_gas_stations_boolean;")
+            print("ALTER TABLE routes ADD COLUMN gas_stations JSONB DEFAULT '[]';")
+
+
+        conn.commit()
+        print("Databáze úspěšně inicializována.")
+    except psycopg2.Error as e:
+        conn.rollback()
+        print(f"Chyba při inicializaci databáze: {e}")
+    finally:
+        if conn:
+            cursor.close()
+            conn.close()
+
+
+def register_user(username, password, is_admin=False):
+    """Zaregistruje nového uživatele."""
     conn = get_db_connection()
-    if conn is None: return False
+    if conn is None:
+        return False
     cursor = conn.cursor()
     try:
+        hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         cursor.execute(
-            "INSERT INTO users (username, password, is_admin) VALUES (%s, %s, %s);",
-            (username, hashed_password, bool(is_admin))
+            "INSERT INTO users (username, password_hash, is_admin) VALUES (%s, %s, %s);",
+            (username, hashed_password, is_admin)
         )
         conn.commit()
         return True
     except psycopg2.errors.UniqueViolation:
-        print(f"Uživatel '{username}' již existuje.")
         conn.rollback()
+        print(f"Uživatel '{username}' již existuje.")
         return False
     except psycopg2.Error as e:
-        print(f"Chyba při registraci uživatele: {e}")
         conn.rollback()
+        print(f"Chyba při registraci uživatele: {e}")
         return False
     finally:
-        cursor.close()
-        conn.close()
+        if conn:
+            cursor.close()
+            conn.close()
 
-def verify_login(username, password):
-    """
-    Ověří přihlašovací údaje uživatele.
-    Pokud je přihlášení úspěšné, vrátí slovník s 'id', 'username' a 'is_admin'.
-    Jinak vrátí None.
-    """
+def verify_user(username, password):
+    """Ověří uživatelské jméno a heslo."""
     conn = get_db_connection()
-    if conn is None: return None
+    if conn is None:
+        return None, False, None # user_id, is_valid, is_admin
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT id, username, password, is_admin FROM users WHERE username = %s;", (username,))
+        cursor.execute("SELECT id, password_hash, is_admin FROM users WHERE username = %s;", (username,))
         result = cursor.fetchone()
         if result:
-            user_id, db_username, stored_hashed_password, is_admin_status = result
-            if bcrypt.checkpw(password.encode('utf-8'), stored_hashed_password.encode('utf-8')):
-                return {
-                    'id': user_id,
-                    'username': db_username,
-                    'is_admin': bool(is_admin_status)
-                }
-        return None
+            user_id, hashed_password, is_admin = result
+            if bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8')):
+                return user_id, True, is_admin
+        return None, False, None
     except psycopg2.Error as e:
-        print(f"Chyba při ověřování přihlášení: {e}")
-        return None
+        print(f"Chyba při ověřování uživatele: {e}")
+        return None, False, None
     finally:
-        cursor.close()
-        conn.close()
+        if conn:
+            cursor.close()
+            conn.close()
 
 def get_user_id(username):
     """Získá ID uživatele podle uživatelského jména."""
     conn = get_db_connection()
-    if conn is None: return None
+    if conn is None:
+        return None
     cursor = conn.cursor()
     try:
         cursor.execute("SELECT id FROM users WHERE username = %s;", (username,))
@@ -132,260 +173,238 @@ def get_user_id(username):
         print(f"Chyba při získávání ID uživatele: {e}")
         return None
     finally:
-        cursor.close()
-        conn.close()
+        if conn:
+            cursor.close()
+            conn.close()
 
-def is_admin(username): # Tato funkce už by neměla být přímo volána z login_screen.py, verify_login je lepší
-    """Zkontroluje, zda je uživatel administrátor."""
+def get_username_by_id(user_id):
+    """Získá uživatelské jméno podle ID."""
     conn = get_db_connection()
-    if conn is None: return False
+    if conn is None:
+        return None
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT is_admin FROM users WHERE username = %s;", (username,))
+        cursor.execute("SELECT username FROM users WHERE id = %s;", (user_id,))
         result = cursor.fetchone()
-        return bool(result[0]) if result else False
+        return result[0] if result else None
     except psycopg2.Error as e:
-        print(f"Chyba při kontrole administrátorských práv: {e}")
-        return False
+        print(f"Chyba při získávání uživatelského jména podle ID: {e}")
+        return None
     finally:
-        cursor.close()
-        conn.close()
-
-def add_route(user_id, name, start_location, destination, distance, needs_fuel):
-    """Přidá novou trasu do databáze."""
-    conn = get_db_connection()
-    if conn is None: return False
-    cursor = conn.cursor()
-    try:
-        cursor.execute(
-            "INSERT INTO routes (user_id, name, start_location, destination, distance, needs_fuel) VALUES (%s, %s, %s, %s, %s, %s);",
-            (user_id, name, start_location, destination, distance, bool(needs_fuel))
-        )
-        conn.commit()
-        return True
-    except psycopg2.errors.UniqueViolation:
-        print(f"Trasa s názvem '{name}' pro uživatele {user_id} již existuje.")
-        conn.rollback()
-        return False
-    except psycopg2.Error as e:
-        print(f"Chyba při přidávání trasy: {e}")
-        conn.rollback()
-        return False
-    finally:
-        cursor.close()
-        conn.close()
-
-def get_routes_by_user(user_id):
-    """Získá všechny trasy pro daného uživatele."""
-    conn = get_db_connection()
-    if conn is None: return []
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT id, name, start_location, destination, distance, needs_fuel FROM routes WHERE user_id = %s;", (user_id,))
-        rows = cursor.fetchall()
-        # Převod na slovníky pro snadnější manipulaci
-        columns = [desc[0] for desc in cursor.description]
-        return [dict(zip(columns, row)) for row in rows]
-    except psycopg2.Error as e:
-        print(f"Chyba při získávání tras pro uživatele: {e}")
-        return []
-    finally:
-        cursor.close()
-        conn.close()
-
-def update_route(route_id, name, start_location, destination, distance, needs_fuel):
-    """Aktualizuje existující trasu."""
-    conn = get_db_connection()
-    if conn is None: return False
-    cursor = conn.cursor()
-    try:
-        cursor.execute(
-            "UPDATE routes SET name = %s, start_location = %s, destination = %s, distance = %s, needs_fuel = %s WHERE id = %s;",
-            (name, start_location, destination, distance, bool(needs_fuel), route_id)
-        )
-        conn.commit()
-        return True
-    except psycopg2.errors.UniqueViolation:
-        print(f"Trasa s názvem '{name}' již existuje pro jiného uživatele nebo aktualizace vytvořila duplikát.")
-        conn.rollback()
-        return False
-    except psycopg2.Error as e:
-        print(f"Chyba při aktualizaci trasy: {e}")
-        conn.rollback()
-        return False
-    finally:
-        cursor.close()
-        conn.close()
-
-def delete_route(route_id):
-    """Smaže trasu z databáze."""
-    conn = get_db_connection()
-    if conn is None: return False
-    cursor = conn.cursor()
-    try:
-        cursor.execute("DELETE FROM routes WHERE id = %s;", (route_id,))
-        conn.commit()
-        return True
-    except psycopg2.Error as e:
-        print(f"Chyba při mazání trasy: {e}")
-        conn.rollback()
-        return False
-    finally:
-        cursor.close()
-        conn.close()
+        if conn:
+            cursor.close()
+            conn.close()
 
 def get_all_users():
     """Získá všechny uživatele (pro admina)."""
     conn = get_db_connection()
-    if conn is None: return []
+    if conn is None:
+        return []
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT id, username, is_admin FROM users;")
-        rows = cursor.fetchall()
-        columns = [desc[0] for desc in cursor.description]
-        return [dict(zip(columns, row)) for row in rows]
+        cursor.execute("SELECT id, username, is_admin FROM users ORDER BY username;")
+        users = [{'id': row[0], 'username': row[1], 'is_admin': row[2]} for row in cursor.fetchall()]
+        return users
     except psycopg2.Error as e:
         print(f"Chyba při získávání všech uživatelů: {e}")
         return []
     finally:
-        cursor.close()
-        conn.close()
+        if conn:
+            cursor.close()
+            conn.close()
 
-def update_user(user_id, new_username=None, new_password=None, new_is_admin=None):
-    """Aktualizuje uživatelská data."""
+def update_user_admin_status(user_id, is_admin):
+    """Aktualizuje administrátorský status uživatele."""
     conn = get_db_connection()
-    if conn is None: return False
+    if conn is None:
+        return False
     cursor = conn.cursor()
     try:
-        updates = []
-        params = []
-        if new_username is not None:
-            updates.append("username = %s")
-            params.append(new_username)
-        if new_password is not None:
-            hashed_password = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-            updates.append("password = %s")
-            params.append(hashed_password)
-        if new_is_admin is not None:
-            updates.append("is_admin = %s")
-            params.append(bool(new_is_admin))
-
-        if not updates:
-            return True
-
-        params.append(user_id)
-        query = f"UPDATE users SET {', '.join(updates)} WHERE id = %s;"
-        cursor.execute(query, tuple(params))
+        cursor.execute(
+            "UPDATE users SET is_admin = %s WHERE id = %s;",
+            (is_admin, user_id)
+        )
         conn.commit()
         return True
-    except psycopg2.errors.UniqueViolation:
-        print(f"Uživatelské jméno '{new_username}' již existuje.")
-        conn.rollback()
-        return False
     except psycopg2.Error as e:
-        print(f"Chyba při aktualizaci uživatele: {e}")
         conn.rollback()
+        print(f"Chyba při aktualizaci admin statusu: {e}")
         return False
     finally:
-        cursor.close()
-        conn.close()
+        if conn:
+            cursor.close()
+            conn.close()
 
 def delete_user(user_id):
-    """Smaže uživatele a jeho trasy."""
+    """Smaže uživatele a všechny jeho trasy."""
     conn = get_db_connection()
-    if conn is None: return False
+    if conn is None:
+        return False
     cursor = conn.cursor()
     try:
+        # Nejprve smazat trasy uživatele kvůli FOREIGN KEY omezení
+        cursor.execute("DELETE FROM routes WHERE user_id = %s;", (user_id,))
+        # Poté smazat uživatele
         cursor.execute("DELETE FROM users WHERE id = %s;", (user_id,))
         conn.commit()
         return True
     except psycopg2.Error as e:
-        print(f"Chyba při mazání uživatele: {e}")
         conn.rollback()
+        print(f"Chyba při mazání uživatele: {e}")
         return False
     finally:
-        cursor.close()
-        conn.close()
+        if conn:
+            cursor.close()
+            conn.close()
 
-def count_admins():
-    """Spočítá počet administrátorů v databázi."""
+def add_route(user_id, name, start_location, destination, distance, travel_time, fuel_consumption, gas_stations, needs_fuel):
+    """Přidá novou trasu do databáze."""
     conn = get_db_connection()
-    if conn is None: return 0
+    if conn is None:
+        return False
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = TRUE;")
-        result = cursor.fetchone()
-        return result[0] if result else 0
+        cursor.execute(
+            """
+            INSERT INTO routes (user_id, name, start_location, destination, distance, travel_time, fuel_consumption, gas_stations, needs_fuel)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
+            """,
+            (user_id, name, start_location, destination, distance, travel_time, fuel_consumption, json.dumps(gas_stations), needs_fuel)
+        )
+        conn.commit()
+        return True
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
+        print(f"Trasa s názvem '{name}' pro uživatele {user_id} již existuje.")
+        return False
     except psycopg2.Error as e:
-        print(f"Chyba při počítání administrátorů: {e}")
-        return 0
+        conn.rollback()
+        print(f"Chyba při přidávání trasy: {e}")
+        return False
     finally:
-        cursor.close()
-        conn.close()
+        if conn:
+            cursor.close()
+            conn.close()
 
-def get_route_by_name(user_id, route_name):
-    """Pomocná funkce pro migraci: Získá trasu podle uživatele a názvu."""
+def update_route(route_id, name, start_location, destination, distance, travel_time, fuel_consumption, gas_stations, needs_fuel):
+    """Aktualizuje existující trasu."""
     conn = get_db_connection()
-    if conn is None: return None
+    if conn is None:
+        return False
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT id FROM routes WHERE user_id = %s AND name = %s;", (user_id, route_name))
-        result = cursor.fetchone()
-        return result[0] if result else None
+        cursor.execute(
+            """
+            UPDATE routes
+            SET name = %s, start_location = %s, destination = %s, distance = %s, travel_time = %s, fuel_consumption = %s, gas_stations = %s, needs_fuel = %s
+            WHERE id = %s;
+            """,
+            (name, start_location, destination, distance, travel_time, fuel_consumption, json.dumps(gas_stations), needs_fuel, route_id)
+        )
+        conn.commit()
+        return True
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
+        print(f"Trasa s názvem '{name}' již existuje pro tohoto uživatele (při aktualizaci).")
+        return False
     except psycopg2.Error as e:
-        print(f"Chyba při kontrole existence trasy: {e}")
-        return None
+        conn.rollback()
+        print(f"Chyba při aktualizaci trasy: {e}")
+        return False
     finally:
-        cursor.close()
-        conn.close()
+        if conn:
+            cursor.close()
+            conn.close()
 
-def migrate_json_to_postgresql(json_file):
+def get_routes_by_user(user_id):
+    """Získá všechny trasy pro konkrétního uživatele."""
+    conn = get_db_connection()
+    if conn is None:
+        return []
+    cursor = conn.cursor()
+    routes = []
+    try:
+        cursor.execute(
+            """
+            SELECT id, name, start_location, destination, distance, travel_time, fuel_consumption, gas_stations, needs_fuel
+            FROM routes
+            WHERE user_id = %s;
+            """,
+            (user_id,)
+        )
+        for row in cursor.fetchall():
+            route = {
+                'id': row[0],
+                'name': row[1],
+                'start_location': row[2],
+                'destination': row[3],
+                'distance': row[4],
+                'travel_time': row[5],
+                'fuel_consumption': row[6],
+                # ZMĚNA ZDE: Odstraněno json.loads(), protože psycopg2 to již převede na Python objekt
+                'gas_stations': row[7] if row[7] is not None else [],
+                'needs_fuel': row[8]
+            }
+            routes.append(route)
+        return routes
+    except psycopg2.Error as e:
+        print(f"Chyba při získávání tras uživatele: {e}")
+        return []
+    finally:
+        if conn:
+            cursor.close()
+            conn.close()
+
+# --- Migrace z JSON (POUZE JEDNOU PRO EXISTUJÍCÍ UŽIVATELE A TRASY) ---
+# Pokud tuto funkci použijete, UJISTĚTE SE, ŽE SE SPUSTÍ POUZE JEDNOU,
+# jinak by mohlo dojít k duplikaci dat.
+def migrate_json_to_postgresql(json_file='login.json'):
     """
     Migruje uživatele a jejich trasy z JSON souboru do PostgreSQL databáze.
-    Tato funkce by měla být spuštěna POUZE JEDNOU!
     """
     try:
         with open(json_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
-        users_to_migrate = data.get("users", [])
-
-        for user_data in users_to_migrate:
-            username = user_data.get("username")
-            password = user_data.get("password")
-            is_admin = int(user_data.get("admin", "0"))
+        print(f"Zahajuji migraci z {json_file} do PostgreSQL...")
+        for user_data in data.get('users', []):
+            username = user_data.get('username')
+            password = user_data.get('password')
+            is_admin = user_data.get('admin') == '1' # Convert "1" to True, "0" to False
 
             if username and password:
-                # Zkontrolovat, zda uživatel již existuje
-                existing_user_id = get_user_id(username)
-                if not existing_user_id:
-                    # register_user vrací True/False, ne ID
+                # Zkusit zaregistrovat uživatele, pokud neexistuje
+                user_id = get_user_id(username)
+                if user_id is None:
                     if register_user(username, password, is_admin):
-                        user_id = get_user_id(username) # Získat ID nově vytvořeného uživatele
+                        user_id = get_user_id(username) # Získat nově vytvořené ID
+                        print(f"Uživatel '{username}' migrován/vytvořen.")
+                        # Migrovat trasy uživatele
+                        if user_id:
+                            for route in user_data.get('trasy', []):
+                                route_name = route.get('name')
+                                start_location = route.get('start_location')
+                                destination = route.get('destination')
+                                distance = route.get('distance') # Uložíme jako je (text "XXX.YY km")
+                                # Předpokládáme výchozí hodnoty pro nová pole při migraci starých dat
+                                travel_time = 0 # Výchozí hodnota
+                                fuel_consumption = 0.0 # Výchozí hodnota
+                                gas_stations = [] # Výchozí hodnota (prázdný seznam JSON)
+                                # needs_fuel je v starém JSONu vypočítáno z distance
+                                # Zde je můžete nechat na False nebo nějak vypočítat
+                                needs_fuel = "fuel" in route.get('distance', '').lower() # Velmi hrubá detekce z distance stringu, jinak False
 
-                        # Migrace tras pro tohoto uživatele
-                        user_routes = user_data.get("trasy", [])
-                        for route in user_routes:
-                            route_name = route.get("name")
-                            start_location = route.get("start_location", "")
-                            destination = route.get("destination")
-                            distance = route.get("distance")
-                            needs_fuel = route.get("needs_fuel", 0)
-
-                            if route_name and destination and distance:
-                                # Zkontrolovat duplicitní trasy pro tohoto uživatele
-                                if not get_route_by_name(user_id, route_name):
-                                    add_route(user_id, route_name, start_location, destination, distance, needs_fuel)
+                                if route_name and start_location and destination:
+                                    if not add_route(user_id, route_name, start_location, destination, distance, travel_time, fuel_consumption, gas_stations, needs_fuel):
+                                        print(f"Varování: Nelze migrovat trasu '{route_name}' pro uživatele '{username}'. Možná již existuje.")
                                 else:
-                                    print(f"Skipping existing route '{route_name}' for user '{username}' during migration.")
-                            else:
-                                print(f"Skipping incomplete route for user '{username}': {route}")
-                    else:
-                        print(f"Skipping routes for user: {username} (already exists or registration failed).")
+                                    print(f"Přeskakuji nekompletní trasu pro uživatele '{username}': {route}")
+                        else:
+                            print(f"Přeskakuji trasy pro uživatele: {username} (uživatel nebyl vytvořen nebo ID není k dispozici).")
                 else:
-                    print(f"User '{username}' already exists in DB. Skipping user and their routes during migration.")
+                    print(f"Uživatel '{username}' již existuje v DB. Přeskakuji migraci uživatele.")
             else:
-                print(f"Skipping user with incomplete data: {user_data}")
+                print(f"Přeskakuji uživatele s nekompletními daty: {user_data}")
         print("Migrace JSON do PostgreSQL dokončena!")
     except FileNotFoundError:
         print(f"JSON soubor '{json_file}' nenalezen pro migraci. Migrace přeskočena.")
@@ -395,14 +414,12 @@ def migrate_json_to_postgresql(json_file):
         print(f"Při migraci JSON nastala neočekávaná chyba: {e}")
 
 if __name__ == "__main__":
-    # Tento blok je pro přímé spuštění database.py pro nastavení/migraci
     initialize_db()
     print("PostgreSQL databáze připravena.")
-    
+
     # --- DŮLEŽITÉ KROKY ---
     # 1. Pokud máte existující login.json a chcete z něj importovat uživatele:
     #    Odkomentujte řádek níže, spusťte tento soubor JEDNOU pomocí `python database.py`.
     #    Po úspěšné migraci, ZAKOMENTUJTE HO ZNOVU, aby se nespouštěl pokaždé.
-    # migrate_json_to_postgresql("login.json")
-
-    pass
+    migrate_json_to_postgresql()
+    # 2. V opačném případě můžete tento blok nechat zakomentovaný.
