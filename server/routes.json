@@ -1,0 +1,44 @@
+{
+    "routes": [
+        {
+            "id": 1,
+            "name": "Praha - Brno",
+            "start_location": "Praha",
+            "destination": "Brno",
+            "distance": "209.5 km",
+            "trip_purpose": "Služební cesta"
+        },
+        {
+            "id": 2,
+            "name": "Brno - Ostrava",
+            "start_location": "Brno",
+            "destination": "Ostrava",
+            "distance": "170.3 km",
+            "trip_purpose": "Obchodní jednání"
+        },
+        {
+            "id": 3,
+            "name": "Ostrava - Olomouc",
+            "start_location": "Ostrava",
+            "destination": "Olomouc",
+            "distance": "100.8 km",
+            "trip_purpose": "Služební cesta"
+        },
+        {
+            "id": 4,
+            "name": "Praha - Plzeň",
+            "start_location": "Praha",
+            "destination": "Plzeň",
+            "distance": "94.2 km",
+            "trip_purpose": "Obchodní jednání"
+        },
+        {
+            "id": 5,
+            "name": "Liberec - Hradec Králové",
+            "start_location": "Liberec",
+            "destination": "Hradec Králové",
+            "distance": "112.6 km",
+            "trip_purpose": "Služební cesta"
+        }
+    ]
+} 
